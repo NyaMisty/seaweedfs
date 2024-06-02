@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"golang.org/x/sync/errgroup"
 	"io"
 	"time"
 
@@ -69,6 +70,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	quietPeriod := tierCommand.Duration("quietFor", 24*time.Hour, "select volumes without no writes for this period")
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
+	concurrency := tierCommand.Int("concurrency", 1, "concurrency to use when uploading")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -91,13 +93,24 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 		return err
 	}
 	fmt.Printf("tier upload volumes: %v\n", volumeIds)
-	for _, vid := range volumeIds {
-		if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
-			return err
-		}
+
+	eg, ctx := errgroup.WithContext(context.Background())
+	eg.SetLimit(*concurrency)
+	for _, _vid := range volumeIds {
+		vid := _vid // capture the loop variable
+		eg.Go(func() error {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
+				fmt.Fprintf(writer, "tier upload volume %v error: %v\n", vid, err)
+				return err
+			}
+			return nil
+		})
 	}
 
-	return nil
+	return eg.Wait()
 }
 
 func doVolumeTierUpload(commandEnv *CommandEnv, writer io.Writer, collection string, vid needle.VolumeId, dest string, keepLocalDatFile bool) (err error) {
