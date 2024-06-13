@@ -42,6 +42,7 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 	volumeIdInt := configureReplicationCommand.Int("volumeId", 0, "the volume id")
 	replicationString := configureReplicationCommand.String("replication", "", "the intended replication value")
 	collectionPattern := configureReplicationCommand.String("collectionPattern", "", "match with wildcard characters '*' and '?'")
+	concurrency := configureReplicationCommand.Int("concurrency", 1, "number of volume servers to configure in parallel")
 	if err = configureReplicationCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -70,6 +71,9 @@ func (c *commandVolumeConfigureReplication) Do(args []string, commandEnv *Comman
 
 	eg, gCtx := errgroup.WithContext(context.Background())
 	_ = gCtx
+	if *concurrency != 0 {
+		eg.SetLimit(*concurrency)
+	}
 	// find all data nodes with volumes that needs replication change
 	eachDataNode(topologyInfo, func(dc string, rack RackId, dn *master_pb.DataNodeInfo) {
 		eg.Go(func() error {
