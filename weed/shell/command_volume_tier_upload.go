@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/sync/errgroup"
 	"io"
 	"time"
@@ -66,12 +67,17 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
 	concurrency := tierCommand.Int("concurrency", 1, "concurrency to use when uploading")
+	disk := tierCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	nolock := tierCommand.Bool("nolock", false, "does not lock")
+	ignoreError := tierCommand.Bool("ignoreError", false, "continue to upload next volume after error")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
+	if !*nolock {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return
+		}
 	}
 
 	vid := needle.VolumeId(*volumeId)
@@ -81,9 +87,15 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
 	}
 
+	var diskType *types.DiskType
+	if disk != nil {
+		_diskType := types.ToDiskType(*disk)
+		diskType = &_diskType
+	}
+
 	// apply to all volumes in the collection
 	// reusing collectVolumeIdsForEcEncode for now
-	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, diskType, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
@@ -92,14 +104,21 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	eg, ctx := errgroup.WithContext(context.Background())
 	eg.SetLimit(*concurrency)
 	for _, _vid := range volumeIds {
-		vid := _vid // capture the loop variable
+		vid := _vid                            // capture the loop variable
+		if !*ignoreError && ctx.Err() != nil { // fast bail-out after failure
+			break
+		}
 		eg.Go(func() error {
-			if ctx.Err() != nil {
+			if !*ignoreError && ctx.Err() != nil {
 				return nil
 			}
 			if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
 				fmt.Fprintf(writer, "tier upload volume %v error: %v\n", vid, err)
-				return err
+				if !*ignoreError {
+					return err
+				}
+			} else {
+				fmt.Fprintf(writer, "tier upload volume %v success\n", vid)
 			}
 			return nil
 		})
@@ -152,11 +171,15 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 			KeepLocalDatFile:       keepLocalDatFile,
 		})
 
-		if stream == nil && copyErr == nil {
-			// when the volume is already uploaded, VolumeTierMoveDatToRemote will return nil stream and nil error
-			// so we should directly return in this case
-			fmt.Fprintf(writer, "volume %v already uploaded", volumeId)
-			return nil
+		if stream == nil {
+			if copyErr == nil {
+				// when the volume is already uploaded, VolumeTierMoveDatToRemote will return nil stream and nil error
+				// so we should directly return in this case
+				fmt.Fprintf(writer, "volume %v already uploaded", volumeId)
+				return nil
+			} else {
+				return copyErr
+			}
 		}
 		var lastProcessed int64
 		for {
@@ -171,7 +194,7 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 
 			processingSpeed := float64(resp.Processed-lastProcessed) / 1024.0 / 1024.0
 
-			fmt.Fprintf(writer, "copied %.2f%%, %d bytes, %.2fMB/s\n", resp.ProcessedPercentage, resp.Processed, processingSpeed)
+			fmt.Fprintf(writer, "copied volume %d %.2f%%, %d bytes, %.2fMB/s\n", volumeId, resp.ProcessedPercentage, resp.Processed, processingSpeed)
 
 			lastProcessed = resp.Processed
 		}

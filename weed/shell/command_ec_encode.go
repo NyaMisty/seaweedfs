@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"math/rand"
 	"sync"
@@ -97,7 +98,7 @@ func (c *commandEcEncode) Do(args []string, commandEnv *CommandEnv, writer io.Wr
 	}
 
 	// apply to all volumes in the collection
-	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, nil, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
@@ -287,7 +288,7 @@ func balancedEcDistribution(servers []*EcNode) (allocated [][]uint32) {
 	return allocated
 }
 
-func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
+func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection string, sourceDiskType *types.DiskType, fullPercentage float64, quietPeriod time.Duration) (vids []needle.VolumeId, err error) {
 
 	// collect topology information
 	topologyInfo, volumeSizeLimitMb, err := collectTopologyInfo(commandEnv, 0)
@@ -308,7 +309,8 @@ func collectVolumeIdsForEcEncode(commandEnv *CommandEnv, selectedCollection stri
 				if v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
 					continue
 				}
-				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds {
+				if v.Collection == selectedCollection && v.ModifiedAtSecond+quietSeconds < nowUnixSeconds &&
+					(sourceDiskType == nil || types.ToDiskType(v.DiskType) == *sourceDiskType) {
 					if float64(v.Size) > fullPercentage/100*float64(volumeSizeLimitMb)*1024*1024 {
 						vidMap[v.Id] = true
 					}
