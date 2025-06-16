@@ -73,12 +73,16 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
 	concurrency := tierCommand.Int("concurrency", 1, "concurrency to use when uploading")
 	disk := tierCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	nolock := tierCommand.Bool("nolock", false, "does not lock")
+	ignoreError := tierCommand.Bool("ignoreError", false, "continue to upload next volume after error")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
 
-	if err = commandEnv.confirmIsLocked(args); err != nil {
-		return
+	if !*nolock {
+		if err = commandEnv.confirmIsLocked(args); err != nil {
+			return
+		}
 	}
 
 	vid := needle.VolumeId(*volumeId)
@@ -112,7 +116,9 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 			}
 			if err = doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile); err != nil {
 				fmt.Fprintf(writer, "tier upload volume %v error: %v\n", vid, err)
-				return err
+				if !*ignoreError {
+					return err
+				}
 			}
 			return nil
 		})
@@ -191,7 +197,7 @@ func uploadDatToRemoteTier(grpcDialOption grpc.DialOption, writer io.Writer, vol
 
 			processingSpeed := float64(resp.Processed-lastProcessed) / 1024.0 / 1024.0
 
-			fmt.Fprintf(writer, "copied %.2f%%, %d bytes, %.2fMB/s\n", resp.ProcessedPercentage, resp.Processed, processingSpeed)
+			fmt.Fprintf(writer, "copied volume %d %.2f%%, %d bytes, %.2fMB/s\n", volumeId, resp.ProcessedPercentage, resp.Processed, processingSpeed)
 
 			lastProcessed = resp.Processed
 		}
