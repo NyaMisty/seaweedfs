@@ -201,7 +201,35 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 		entry.Attr.TtlSec = 0
 	}
 
-	oldEntry, _ := f.FindEntry(ctx, entry.FullPath)
+	needCheckBeforeInsert := true
+	if !o_excl {
+		switch f.Store.GetName() {
+		case "cassandra":
+		case "elastic":
+		case "hbase":
+		case "etcd":
+		case "leveldb2":
+		case "leveldb3":
+		case "mongodb":
+		case "redis":
+		case "redis2":
+		case "redis3":
+		case "rocksdb":
+		case "sqlite": // supports upsert
+		case "mysql": // must enableUpsert
+		case "postgres": // must enableUpsert
+		case "postgres2": // must enableUpsert
+			needCheckBeforeInsert = false
+			break
+		default:
+			break
+		}
+	}
+
+	var oldEntry *Entry
+	if needCheckBeforeInsert {
+		oldEntry, _ = f.FindEntry(ctx, entry.FullPath)
+	}
 
 	/*
 		if !hasWritePermission(lastDirectoryEntry, entry) {
