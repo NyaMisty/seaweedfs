@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"golang.org/x/sync/errgroup"
 	"io"
 	"time"
@@ -71,6 +72,7 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 	dest := tierCommand.String("dest", "", "the target tier name")
 	keepLocalDatFile := tierCommand.Bool("keepLocalDatFile", false, "whether keep local dat file")
 	concurrency := tierCommand.Int("concurrency", 1, "concurrency to use when uploading")
+	disk := tierCommand.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	if err = tierCommand.Parse(args); err != nil {
 		return nil
 	}
@@ -86,9 +88,15 @@ func (c *commandVolumeTierUpload) Do(args []string, commandEnv *CommandEnv, writ
 		return doVolumeTierUpload(commandEnv, writer, *collection, vid, *dest, *keepLocalDatFile)
 	}
 
+	var diskType *types.DiskType
+	if disk != nil {
+		_diskType := types.ToDiskType(*disk)
+		diskType = &_diskType
+	}
+
 	// apply to all volumes in the collection
 	// reusing collectVolumeIdsForEcEncode for now
-	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, *fullPercentage, *quietPeriod)
+	volumeIds, err := collectVolumeIdsForEcEncode(commandEnv, *collection, diskType, *fullPercentage, *quietPeriod)
 	if err != nil {
 		return err
 	}
